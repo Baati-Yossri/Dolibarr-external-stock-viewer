@@ -1,0 +1,12 @@
+ClientStock=Stock Client
+Module500000Name=Stock Client
+Module500000Desc=Permet aux clients (utilisateurs externes) de consulter leur stock dans des entrepôts spécifiques.
+Permission500001=Lire le stock client
+Permission500002=Configurer l'accès au stock client
+MyStock=Mon Stock
+WarehouseAccess=Accès Entrepôts
+Client=Client
+Warehouse=Entrepôt
+AddAccess=Ajouter un accès
+AccessList=Liste des accès
+NoAccessFound=Aucun accès configuré
