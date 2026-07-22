@@ -44,12 +44,26 @@ class modClientStock extends DolibarrModules
         // Menus
         $this->menu = array();
 
-        // We add it to the Home left menu so it's guaranteed to show up
         $this->menu[0] = array(
-            'fk_menu' => 'fk_mainmenu=home',
-            'type' => 'left',
+            'fk_menu' => '',
+            'type' => 'top',
             'titre' => 'ClientStock',
-            'mainmenu' => 'home',
+            'mainmenu' => 'clientstock',
+            'leftmenu' => '',
+            'url' => '/custom/clientstock/clientstock_list.php',
+            'langs' => 'clientstock@clientstock',
+            'position' => 1000,
+            'enabled' => '1',
+            'perms' => '$user->rights->clientstock->read',
+            'target' => '',
+            'user' => 2 // 2 = Visible to external users (and internal)
+        );
+
+        $this->menu[1] = array(
+            'fk_menu' => 'fk_mainmenu=clientstock',
+            'type' => 'left',
+            'titre' => 'MyStock',
+            'mainmenu' => 'clientstock',
             'leftmenu' => 'clientstock_list',
             'url' => '/custom/clientstock/clientstock_list.php',
             'langs' => 'clientstock@clientstock',
@@ -57,7 +71,7 @@ class modClientStock extends DolibarrModules
             'enabled' => '1',
             'perms' => '$user->rights->clientstock->read',
             'target' => '',
-            'user' => 0
+            'user' => 2 // 2 = Visible to external users (and internal)
         );
     }
 
