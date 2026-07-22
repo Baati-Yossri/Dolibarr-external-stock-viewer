@@ -125,11 +125,11 @@ if ($resql) {
             // Build bullet points for articles
             print '<td>';
             foreach ($of['articles'] as $art) {
-                print htmlspecialchars($art['ref'] . ' - ' . $art['label']) . ' (<b>' . $art['qty'] . '</b>)<br>';
+                print htmlspecialchars($art['ref'] . ' - ' . $art['label']) . ' (<b>' . ((float) round($art['qty'], 4)) . '</b>)<br>';
             }
             print '</td>';
             
-            print '<td align="right">' . $of['total_qty'] . '</td>';
+            print '<td align="right">' . ((float) round($of['total_qty'], 4)) . '</td>';
             print '<td align="center">' . get_prod_status_badge($of['production_status']) . '</td>';
             print '<td align="center">' . get_control_status_badge($of['control_status']) . '</td>';
             print '</tr>';

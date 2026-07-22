@@ -19,5 +19,12 @@ StatusProd=Statut Prod.
 StatusControl=Statut Contrôle
 Article=Article
 NoOFFound=Aucun ordre de fabrication en production
+ReservedYourOrders=Réservé (Vos Commandes)
+ReservedTotal=Réservé (Total)
+StockAvailable=Stock Disponible
+ReservationsTitle=Commandes avec Stock Réservé
+OrderDate=Date Commande
+
+
 
 
