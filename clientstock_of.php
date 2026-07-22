@@ -78,21 +78,47 @@ if ($resql) {
     print '<td align="center">' . $langs->trans("Status") . '</td>';
     print '</tr>';
 
+    // Group records by OF in PHP
+    $ofs = array();
     if ($num > 0) {
-        $i = 0;
-        while ($i < $num) {
-            $obj = $db->fetch_object($resql);
+        while ($obj = $db->fetch_object($resql)) {
+            $of_ref = $obj->of_ref;
+            if (!isset($ofs[$of_ref])) {
+                $ofs[$of_ref] = array(
+                    'of_ref' => $obj->of_ref,
+                    'commande_ref' => $obj->commande_ref,
+                    'client_name' => isset($obj->client_name) ? $obj->client_name : '',
+                    'status' => $obj->status,
+                    'total_qty' => 0,
+                    'articles' => array()
+                );
+            }
+            $ofs[$of_ref]['articles'][] = array(
+                'ref' => $obj->product_ref,
+                'label' => $obj->product_label,
+                'qty' => $obj->qty
+            );
+            $ofs[$of_ref]['total_qty'] += $obj->qty;
+        }
+
+        foreach ($ofs as $of) {
             print '<tr class="oddeven">';
             if ($socid == 0) {
-                print '<td>' . $obj->client_name . '</td>';
+                print '<td>' . htmlspecialchars($of['client_name']) . '</td>';
             }
-            print '<td>' . $obj->of_ref . '</td>';
-            print '<td>' . $obj->commande_ref . '</td>';
-            print '<td>' . $obj->product_ref . ' - ' . $obj->product_label . '</td>';
-            print '<td align="right">' . $obj->qty . '</td>';
-            print '<td align="center">' . get_status_badge($obj->status) . '</td>';
+            print '<td>' . htmlspecialchars($of['of_ref']) . '</td>';
+            print '<td>' . htmlspecialchars($of['commande_ref']) . '</td>';
+            
+            // Build bullet points for articles
+            print '<td>';
+            foreach ($of['articles'] as $art) {
+                print htmlspecialchars($art['ref'] . ' - ' . $art['label']) . ' (<b>' . $art['qty'] . '</b>)<br>';
+            }
+            print '</td>';
+            
+            print '<td align="right">' . $of['total_qty'] . '</td>';
+            print '<td align="center">' . get_status_badge($of['status']) . '</td>';
             print '</tr>';
-            $i++;
         }
     } else {
         $colspan = ($socid == 0) ? 6 : 5;
