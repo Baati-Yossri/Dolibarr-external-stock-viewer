@@ -24,7 +24,7 @@ if ($socid == 0 && empty($user->admin)) {
 // Build query
 if ($socid > 0) {
     // Client view - only show OFs linked to their third-party orders and not archived
-    $sql = "SELECT of.rowid, of.of_ref, of.status, of.datec, c.ref as commande_ref,";
+    $sql = "SELECT of.rowid, of.of_ref, l.production_status, l.control_status, of.datec, c.ref as commande_ref,";
     $sql .= " p.ref as product_ref, p.label as product_label, cd.qty";
     $sql .= " FROM " . MAIN_DB_PREFIX . "prod_of as of";
     $sql .= " INNER JOIN " . MAIN_DB_PREFIX . "commande as c ON of.fk_commande = c.rowid";
@@ -37,7 +37,7 @@ if ($socid > 0) {
     $sql .= " ORDER BY of.datec DESC, of.of_ref ASC, p.ref ASC";
 } else {
     // Admin preview - show all OFs in production with their corresponding client name
-    $sql = "SELECT of.rowid, of.of_ref, of.status, of.datec, c.ref as commande_ref, s.nom as client_name,";
+    $sql = "SELECT of.rowid, of.of_ref, l.production_status, l.control_status, of.datec, c.ref as commande_ref, s.nom as client_name,";
     $sql .= " p.ref as product_ref, p.label as product_label, cd.qty";
     $sql .= " FROM " . MAIN_DB_PREFIX . "prod_of as of";
     $sql .= " INNER JOIN " . MAIN_DB_PREFIX . "commande as c ON of.fk_commande = c.rowid";
@@ -52,10 +52,21 @@ if ($socid > 0) {
 
 $resql = $db->query($sql);
 
-function get_status_badge($status) {
-    if ($status == 'non_lance') {
+function get_prod_status_badge($status) {
+    if (empty($status) || $status == 'todo') {
         return '<span class="badge badge-warning" style="background-color: #f0ad4e; color: #fff; padding: 2px 6px; border-radius: 3px;">En attente</span>';
-    } elseif ($status == 'encours' || $status == 'lance') {
+    } elseif ($status == 'encours' || $status == 'en_cours' || $status == 'lance') {
+        return '<span class="badge badge-info" style="background-color: #5bc0de; color: #fff; padding: 2px 6px; border-radius: 3px;">En cours</span>';
+    } elseif ($status == 'termine') {
+        return '<span class="badge badge-success" style="background-color: #5cb85c; color: #fff; padding: 2px 6px; border-radius: 3px;">Terminé</span>';
+    }
+    return '<span class="badge badge-secondary" style="background-color: #777; color: #fff; padding: 2px 6px; border-radius: 3px;">' . ucfirst(str_replace('_', ' ', $status)) . '</span>';
+}
+
+function get_control_status_badge($status) {
+    if (empty($status) || $status == 'todo') {
+        return '<span class="badge badge-warning" style="background-color: #f0ad4e; color: #fff; padding: 2px 6px; border-radius: 3px;">En attente</span>';
+    } elseif ($status == 'encours' || $status == 'en_cours' || $status == 'lance') {
         return '<span class="badge badge-info" style="background-color: #5bc0de; color: #fff; padding: 2px 6px; border-radius: 3px;">En cours</span>';
     } elseif ($status == 'termine') {
         return '<span class="badge badge-success" style="background-color: #5cb85c; color: #fff; padding: 2px 6px; border-radius: 3px;">Terminé</span>';
@@ -75,7 +86,8 @@ if ($resql) {
     print '<td>' . $langs->trans("OrderRef") . '</td>';
     print '<td>' . $langs->trans("Article") . '</td>';
     print '<td align="right">' . $langs->trans("Quantity") . '</td>';
-    print '<td align="center">' . $langs->trans("Status") . '</td>';
+    print '<td align="center">' . $langs->trans("StatusProd") . '</td>';
+    print '<td align="center">' . $langs->trans("StatusControl") . '</td>';
     print '</tr>';
 
     // Group records by OF in PHP
@@ -88,7 +100,8 @@ if ($resql) {
                     'of_ref' => $obj->of_ref,
                     'commande_ref' => $obj->commande_ref,
                     'client_name' => isset($obj->client_name) ? $obj->client_name : '',
-                    'status' => $obj->status,
+                    'production_status' => $obj->production_status,
+                    'control_status' => $obj->control_status,
                     'total_qty' => 0,
                     'articles' => array()
                 );
@@ -117,11 +130,12 @@ if ($resql) {
             print '</td>';
             
             print '<td align="right">' . $of['total_qty'] . '</td>';
-            print '<td align="center">' . get_status_badge($of['status']) . '</td>';
+            print '<td align="center">' . get_prod_status_badge($of['production_status']) . '</td>';
+            print '<td align="center">' . get_control_status_badge($of['control_status']) . '</td>';
             print '</tr>';
         }
     } else {
-        $colspan = ($socid == 0) ? 6 : 5;
+        $colspan = ($socid == 0) ? 7 : 6;
         print '<tr><td colspan="' . $colspan . '"><span class="opacitymedium">' . $langs->trans("NoOFFound") . '</span></td></tr>';
     }
     print '</table>';

@@ -15,6 +15,9 @@ OFRef=Réf. OF
 OrderRef=Réf. Commande
 Quantity=Quantité
 Status=Statut
+StatusProd=Statut Prod.
+StatusControl=Statut Contrôle
 Article=Article
 NoOFFound=Aucun ordre de fabrication en production
+
 
