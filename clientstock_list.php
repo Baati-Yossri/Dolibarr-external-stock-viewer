@@ -55,9 +55,60 @@ function get_reservation_status_badge($status) {
     return '';
 }
 
+// Function to calculate and update order reservation status on-the-fly to guarantee absolute accuracy
+function clientstock_calculate_order_reservation_status($db, $order_id) {
+    require_once DOL_DOCUMENT_ROOT . '/custom/factory/class/factory.class.php';
+    require_once DOL_DOCUMENT_ROOT . '/custom/calcul_stock/class/calculstockreservation.class.php';
+    require_once DOL_DOCUMENT_ROOT . '/core/class/extrafields.class.php';
+    require_once DOL_DOCUMENT_ROOT . '/commande/class/commande.class.php';
+
+    $object = new Commande($db);
+    if ($object->fetch($order_id) <= 0) return '0';
+    
+    $factory = new Factory($db);
+    $reservation_static = new CalculStockReservation($db);
+    
+    $total_needed = 0;
+    $total_reserved = 0;
+    $total_consumed = 0;
+
+    foreach ($object->lines as $line) {
+        if (!empty($line->fk_product)) {
+            $components = $factory->getChildsArbo($line->fk_product);
+            if (!empty($components) && is_array($components)) {
+                foreach ($components as $compId => $compData) {
+                    $needed = $compData[1] * $line->qty;
+                    $total_needed += $needed;
+                    
+                    if ($reservation_static->fetchByLineAndProduct($line->id, $compId) > 0) {
+                        if ($reservation_static->status == 1) {
+                            $total_consumed += $reservation_static->qty;
+                        } else {
+                            $total_reserved += $reservation_static->qty;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    $status_code = '0'; // Non réservé
+    if ($total_needed > 0) {
+        if ($total_consumed >= ($total_needed - 0.0001)) {
+            $status_code = '3'; // Consommé
+        } elseif (($total_reserved + $total_consumed) >= ($total_needed - 0.0001)) {
+            $status_code = '2'; // Réservé
+        } elseif ($total_reserved > 0 || $total_consumed > 0) {
+            $status_code = '1'; // Réservé partiellement
+        }
+    }
+
+    return $status_code;
+}
+
 // 1. Fetch active/consumed reservations (cards) from calcul_stock module
 // Grouped by order, displaying the original ordered products (not the components/nomenclature)
-$sql_res = "SELECT DISTINCT c.rowid as order_id, c.ref as order_ref, c.date_commande, coef.calc_stock_status,";
+$sql_res = "SELECT DISTINCT c.rowid as order_id, c.ref as order_ref, c.date_commande,";
 if ($socid == 0) {
     $sql_res .= " s.nom as client_name,";
 }
@@ -67,7 +118,6 @@ $sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "commande as c ON r.fk_commande = 
 if ($socid == 0) {
     $sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "societe as s ON c.fk_soc = s.rowid";
 }
-$sql_res .= " LEFT JOIN " . MAIN_DB_PREFIX . "commande_extrafields as coef ON coef.fk_object = c.rowid";
 $sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "commandedet as cd ON cd.fk_commande = c.rowid";
 $sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "product as p ON cd.fk_product = p.rowid";
 $sql_res .= " WHERE r.status IN (0, 1)";
@@ -82,10 +132,11 @@ if ($resql_res) {
     while ($obj = $db->fetch_object($resql_res)) {
         $order_id = $obj->order_id;
         if (!isset($order_reservations[$order_id])) {
+            $calculated_status = clientstock_calculate_order_reservation_status($db, $order_id);
             $order_reservations[$order_id] = array(
                 'ref' => $obj->order_ref,
                 'date' => $obj->date_commande,
-                'status' => $obj->calc_stock_status,
+                'status' => $calculated_status,
                 'client_name' => isset($obj->client_name) ? $obj->client_name : '',
                 'items' => array()
             );
