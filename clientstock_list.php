@@ -68,9 +68,11 @@ function clientstock_calculate_order_reservation_status($db, $order_id) {
     $factory = new Factory($db);
     $reservation_static = new CalculStockReservation($db);
     
-    $total_needed = 0;
-    $total_reserved = 0;
-    $total_consumed = 0;
+    $num_components = 0;
+    $num_consumed = 0;
+    $num_reserved = 0;
+    $num_partially_reserved = 0;
+    $num_unreserved = 0;
 
     foreach ($object->lines as $line) {
         if (!empty($line->fk_product)) {
@@ -78,14 +80,20 @@ function clientstock_calculate_order_reservation_status($db, $order_id) {
             if (!empty($components) && is_array($components)) {
                 foreach ($components as $compId => $compData) {
                     $needed = $compData[1] * $line->qty;
-                    $total_needed += $needed;
+                    $num_components++;
                     
                     if ($reservation_static->fetchByLineAndProduct($line->id, $compId) > 0) {
                         if ($reservation_static->status == 1) {
-                            $total_consumed += $reservation_static->qty;
+                            $num_consumed++;
+                        } elseif ($reservation_static->qty >= ($needed - 0.0001)) {
+                            $num_reserved++;
+                        } elseif ($reservation_static->qty > 0) {
+                            $num_partially_reserved++;
                         } else {
-                            $total_reserved += $reservation_static->qty;
+                            $num_unreserved++;
                         }
+                    } else {
+                        $num_unreserved++;
                     }
                 }
             }
@@ -93,12 +101,12 @@ function clientstock_calculate_order_reservation_status($db, $order_id) {
     }
     
     $status_code = '0'; // Non réservé
-    if ($total_needed > 0) {
-        if ($total_consumed >= ($total_needed - 0.0001)) {
+    if ($num_components > 0) {
+        if ($num_consumed == $num_components) {
             $status_code = '3'; // Consommé
-        } elseif (($total_reserved + $total_consumed) >= ($total_needed - 0.0001)) {
+        } elseif (($num_consumed + $num_reserved) == $num_components) {
             $status_code = '2'; // Réservé
-        } elseif ($total_reserved > 0 || $total_consumed > 0) {
+        } elseif ($num_consumed > 0 || $num_reserved > 0 || $num_partially_reserved > 0) {
             $status_code = '1'; // Réservé partiellement
         }
     }
