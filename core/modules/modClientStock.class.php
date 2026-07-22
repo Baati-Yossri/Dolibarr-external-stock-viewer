@@ -73,6 +73,21 @@ class modClientStock extends DolibarrModules
             'target' => '',
             'user' => 2 // 2 = Visible to external users (and internal)
         );
+
+        $this->menu[2] = array(
+            'fk_menu' => 'fk_mainmenu=clientstock',
+            'type' => 'left',
+            'titre' => 'OfInProduction',
+            'mainmenu' => 'clientstock',
+            'leftmenu' => 'clientstock_of',
+            'url' => '/custom/clientstock/clientstock_of.php',
+            'langs' => 'clientstock@clientstock',
+            'position' => 200,
+            'enabled' => '1',
+            'perms' => '$user->rights->clientstock->read',
+            'target' => '',
+            'user' => 2 // 2 = Visible to external users (and internal)
+        );
     }
 
     public function init($options = '')

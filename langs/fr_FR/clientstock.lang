@@ -10,3 +10,11 @@ Warehouse=Entrepôt
 AddAccess=Ajouter un accès
 AccessList=Liste des accès
 NoAccessFound=Aucun accès configuré
+OfInProduction=OF en Production
+OFRef=Réf. OF
+OrderRef=Réf. Commande
+Quantity=Quantité
+Status=Statut
+Article=Article
+NoOFFound=Aucun ordre de fabrication en production
+
