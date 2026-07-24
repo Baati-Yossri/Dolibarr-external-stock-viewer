@@ -44,7 +44,7 @@ print '</form>';
 // Build query
 if ($socid > 0) {
     // Client view - only show OFs linked to their third-party orders and not archived
-    $sql = "SELECT of.rowid, of.of_ref, l.production_status, l.control_status, of.datec, c.ref as commande_ref,";
+    $sql = "SELECT of.rowid, of.of_ref, of.fusion_group_id, l.production_status, l.control_status, of.datec, c.ref as commande_ref,";
     $sql .= " p.ref as product_ref, p.label as product_label, cd.qty";
     $sql .= " FROM " . MAIN_DB_PREFIX . "prod_of as of";
     $sql .= " INNER JOIN " . MAIN_DB_PREFIX . "commande as c ON of.fk_commande = c.rowid";
@@ -56,12 +56,12 @@ if ($socid > 0) {
     $sql .= " AND coalesce(l.archived, 0) = 0";
     if (!empty($search_keyword)) {
         $search_esc = $db->escape(trim($search_keyword));
-        $sql .= " AND (of.of_ref LIKE '%" . $search_esc . "%' OR c.ref LIKE '%" . $search_esc . "%' OR p.ref LIKE '%" . $search_esc . "%' OR p.label LIKE '%" . $search_esc . "%')";
+        $sql .= " AND (of.of_ref LIKE '%" . $search_esc . "%' OR of.fusion_group_id LIKE '%" . $search_esc . "%' OR c.ref LIKE '%" . $search_esc . "%' OR p.ref LIKE '%" . $search_esc . "%' OR p.label LIKE '%" . $search_esc . "%')";
     }
     $sql .= " ORDER BY of.datec DESC, of.of_ref ASC, p.ref ASC";
 } else {
     // Admin preview - show all OFs in production with their corresponding client name
-    $sql = "SELECT of.rowid, of.of_ref, l.production_status, l.control_status, of.datec, c.ref as commande_ref, s.nom as client_name,";
+    $sql = "SELECT of.rowid, of.of_ref, of.fusion_group_id, l.production_status, l.control_status, of.datec, c.ref as commande_ref, s.nom as client_name,";
     $sql .= " p.ref as product_ref, p.label as product_label, cd.qty";
     $sql .= " FROM " . MAIN_DB_PREFIX . "prod_of as of";
     $sql .= " INNER JOIN " . MAIN_DB_PREFIX . "commande as c ON of.fk_commande = c.rowid";
@@ -73,7 +73,7 @@ if ($socid > 0) {
     $sql .= " WHERE coalesce(l.archived, 0) = 0";
     if (!empty($search_keyword)) {
         $search_esc = $db->escape(trim($search_keyword));
-        $sql .= " AND (of.of_ref LIKE '%" . $search_esc . "%' OR c.ref LIKE '%" . $search_esc . "%' OR s.nom LIKE '%" . $search_esc . "%' OR p.ref LIKE '%" . $search_esc . "%' OR p.label LIKE '%" . $search_esc . "%')";
+        $sql .= " AND (of.of_ref LIKE '%" . $search_esc . "%' OR of.fusion_group_id LIKE '%" . $search_esc . "%' OR c.ref LIKE '%" . $search_esc . "%' OR s.nom LIKE '%" . $search_esc . "%' OR p.ref LIKE '%" . $search_esc . "%' OR p.label LIKE '%" . $search_esc . "%')";
     }
     $sql .= " ORDER BY of.datec DESC, of.of_ref ASC, p.ref ASC";
 }
@@ -118,14 +118,41 @@ if ($resql) {
     print '<td align="center">' . $langs->trans("StatusControl") . '</td>';
     print '</tr>';
 
-    // Group records by OF in PHP
+    // Group records by OF in PHP using rowid
     $ofs = array();
     if ($num > 0) {
         while ($obj = $db->fetch_object($resql)) {
-            $of_ref = $obj->of_ref;
-            if (!isset($ofs[$of_ref])) {
-                $ofs[$of_ref] = array(
-                    'of_ref' => $obj->of_ref,
+            $of_key = !empty($obj->rowid) ? $obj->rowid : ($obj->of_ref . '_' . $obj->fusion_group_id);
+            if (!isset($ofs[$of_key])) {
+                $of_ref = trim((string) $obj->of_ref);
+                $fusion_id = trim((string) $obj->fusion_group_id);
+                $commande_ref = trim((string) $obj->commande_ref);
+
+                $of_display = '';
+                if (!empty($of_ref) && $of_ref !== '-') {
+                    if (!empty($fusion_id) && $fusion_id !== '-') {
+                        $suffix = '-' . $fusion_id;
+                        if (substr($of_ref, -strlen($suffix)) === $suffix) {
+                            $of_display = substr_replace($of_ref, '/' . $fusion_id, -strlen($suffix));
+                        } else {
+                            $of_display = $of_ref . '/' . $fusion_id;
+                        }
+                    } else {
+                        $of_display = $of_ref;
+                    }
+                } elseif (!empty($commande_ref) && !empty($fusion_id) && $fusion_id !== '-') {
+                    $of_display = $commande_ref . '/' . $fusion_id;
+                } elseif (!empty($fusion_id) && $fusion_id !== '-') {
+                    $of_display = $fusion_id;
+                } else {
+                    $of_display = '-';
+                }
+
+                $ofs[$of_key] = array(
+                    'rowid' => $obj->rowid,
+                    'of_ref' => $of_ref,
+                    'fusion_group_id' => $fusion_id,
+                    'of_display' => $of_display,
                     'commande_ref' => $obj->commande_ref,
                     'client_name' => isset($obj->client_name) ? $obj->client_name : '',
                     'production_status' => $obj->production_status,
@@ -134,12 +161,12 @@ if ($resql) {
                     'articles' => array()
                 );
             }
-            $ofs[$of_ref]['articles'][] = array(
+            $ofs[$of_key]['articles'][] = array(
                 'ref' => $obj->product_ref,
                 'label' => $obj->product_label,
                 'qty' => $obj->qty
             );
-            $ofs[$of_ref]['total_qty'] += $obj->qty;
+            $ofs[$of_key]['total_qty'] += $obj->qty;
         }
 
         foreach ($ofs as $of) {
@@ -147,13 +174,13 @@ if ($resql) {
             foreach ($of['articles'] as $art) {
                 $articles_text .= $art['ref'] . ' ' . $art['label'] . ' ';
             }
-            $search_data = htmlspecialchars(strtolower($of['of_ref'] . ' ' . $of['commande_ref'] . ' ' . $of['client_name'] . ' ' . $articles_text));
+            $search_data = htmlspecialchars(strtolower($of['of_display'] . ' ' . $of['of_ref'] . ' ' . $of['fusion_group_id'] . ' ' . $of['commande_ref'] . ' ' . $of['client_name'] . ' ' . $articles_text));
 
             print '<tr class="oddeven of-row" data-search="' . $search_data . '">';
             if ($socid == 0) {
                 print '<td>' . htmlspecialchars($of['client_name']) . '</td>';
             }
-            print '<td>' . htmlspecialchars($of['of_ref']) . '</td>';
+            print '<td>' . htmlspecialchars($of['of_display']) . '</td>';
             print '<td>' . htmlspecialchars($of['commande_ref']) . '</td>';
             
             // Build bullet points for articles
