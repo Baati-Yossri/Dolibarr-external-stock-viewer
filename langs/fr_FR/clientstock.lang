@@ -24,7 +24,8 @@ ReservedTotal=Réservé (Total)
 StockAvailable=Stock Disponible
 ReservationsTitle=Commandes avec Stock Réservé
 OrderDate=Date Commande
-
-
-
-
+Search=Rechercher
+SearchPlaceholder=Rechercher un produit, référence, emplacement...
+AllWarehouses=Tous les entrepôts
+ClearFilter=Effacer
+SearchOFPlaceholder=Rechercher un OF, commande, article...
