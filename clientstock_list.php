@@ -1,6 +1,7 @@
 <?php
 require '../../main.inc.php';
 require_once DOL_DOCUMENT_ROOT . '/product/class/product.class.php';
+require_once DOL_DOCUMENT_ROOT . '/custom/clientstock/lib/clientstock.lib.php';
 
 $langs->loadLangs(array("clientstock@clientstock", "products", "stocks"));
 
@@ -12,10 +13,25 @@ $socid = $user->socid;
 
 $search_keyword = GETPOST('search_keyword', 'alphanohtml');
 $search_entrepot = GETPOST('search_entrepot', 'int');
+$page = GETPOST('page', 'int');
+$limit = 50;
+if (empty($page) || $page < 0) $page = 0;
+$offset = $limit * $page;
+
+// Export CSV action
+$action = GETPOST('action', 'aZ09');
 
 llxHeader('', $langs->trans("MyStock"));
 
 print load_fiche_titre($langs->trans("MyStock"), '', 'object_stock');
+
+// Admin preview banner (#15)
+if ($socid == 0 && !empty($user->admin)) {
+    print '<div style="background: linear-gradient(135deg, #fef3c7, #fde68a); border: 1px solid #f59e0b; border-radius: 8px; padding: 12px 18px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; font-size: 13px; color: #92400e;">';
+    print '<span style="font-size: 18px;">⚠️</span>';
+    print '<span>' . $langs->trans("AdminPreviewBanner") . '</span>';
+    print '</div>';
+}
 
 if ($socid == 0 && empty($user->admin)) {
     print '<div class="warning">' . $langs->trans("OnlyExternalUsersCanAccess") . '</div>';
@@ -48,7 +64,7 @@ if ($socid > 0 && empty($allowed_entrepots)) {
 $warehouses_list = array();
 $sql_w = "SELECT rowid, ref, description FROM " . MAIN_DB_PREFIX . "entrepot";
 if ($socid > 0 && !empty($allowed_entrepots)) {
-    $sql_w .= " WHERE rowid IN (" . implode(',', $allowed_entrepots) . ")";
+    $sql_w .= " WHERE rowid IN (" . implode(',', array_map('intval', $allowed_entrepots)) . ")";
 } else {
     $sql_w .= " WHERE rowid IN (SELECT fk_entrepot FROM " . MAIN_DB_PREFIX . "clientstock_access)";
 }
@@ -58,20 +74,6 @@ if ($resql_w) {
     while ($obj_w = $db->fetch_object($resql_w)) {
         $warehouses_list[$obj_w->rowid] = $obj_w->ref . ' - ' . $obj_w->description;
     }
-}
-
-// Helper function to render Dolibarr-like badges for the reservation status
-function get_reservation_status_badge($status) {
-    if ($status === '0') {
-        return '<span class="badge" style="background-color: #777; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: bold;">Non réservé</span>';
-    } elseif ($status === '1') {
-        return '<span class="badge" style="background-color: #f0ad4e; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: bold;">Réservé partiel</span>';
-    } elseif ($status === '2') {
-        return '<span class="badge" style="background-color: #5bc0de; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: bold;">Réservé</span>';
-    } elseif ($status === '3') {
-        return '<span class="badge" style="background-color: #5cb85c; color: #fff; padding: 2px 6px; border-radius: 3px; font-size: 11px; font-weight: bold;">Consommé</span>';
-    }
-    return '';
 }
 
 // Function to calculate and update order reservation status on-the-fly to guarantee absolute accuracy
@@ -133,6 +135,96 @@ function clientstock_calculate_order_reservation_status($db, $order_id) {
     return $status_code;
 }
 
+// --- Build the WHERE clause for stock query (shared between display, count, KPI, and CSV export) ---
+function clientstock_build_stock_where($db, $socid, $allowed_entrepots, $search_entrepot, $search_keyword) {
+    $where = "";
+    if ($socid > 0) {
+        $where .= " WHERE ps.fk_entrepot IN (" . implode(',', array_map('intval', $allowed_entrepots)) . ")";
+        $where .= " AND ps.reel != 0";
+    } else {
+        $where .= " INNER_JOIN_PLACEHOLDER";
+        $where .= " WHERE ps.reel != 0";
+    }
+    if ($search_entrepot > 0) {
+        $where .= " AND ps.fk_entrepot = " . (int) $search_entrepot;
+    }
+    if (!empty($search_keyword)) {
+        $search_esc = $db->escape(trim($search_keyword));
+        $where .= " AND (p.ref LIKE '%" . $search_esc . "%' OR p.label LIKE '%" . $search_esc . "%' OR e.ref LIKE '%" . $search_esc . "%' OR e.description LIKE '%" . $search_esc . "%')";
+    }
+    return $where;
+}
+
+$stock_where = clientstock_build_stock_where($db, $socid, $allowed_entrepots, $search_entrepot, $search_keyword);
+
+// --- KPI Queries (#4) ---
+$kpi_sql_base = "SELECT COUNT(DISTINCT p.rowid) as total_products, COUNT(DISTINCT e.rowid) as total_warehouses, COALESCE(SUM(ps.reel), 0) as total_stock";
+$kpi_sql_base .= " FROM " . MAIN_DB_PREFIX . "product_stock as ps";
+$kpi_sql_base .= " INNER JOIN " . MAIN_DB_PREFIX . "product as p ON ps.fk_product = p.rowid";
+$kpi_sql_base .= " INNER JOIN " . MAIN_DB_PREFIX . "entrepot as e ON ps.fk_entrepot = e.rowid";
+if ($socid == 0) {
+    $kpi_sql_base .= " INNER JOIN " . MAIN_DB_PREFIX . "clientstock_access as ca ON ps.fk_entrepot = ca.fk_entrepot";
+}
+$kpi_where = str_replace("INNER_JOIN_PLACEHOLDER", "", $stock_where);
+$kpi_sql = $kpi_sql_base . $kpi_where;
+
+$kpi_products = 0; $kpi_warehouses = 0; $kpi_total_stock = 0;
+$resql_kpi = $db->query($kpi_sql);
+if ($resql_kpi) {
+    $kpi = $db->fetch_object($resql_kpi);
+    $kpi_products = $kpi->total_products;
+    $kpi_warehouses = $kpi->total_warehouses;
+    $kpi_total_stock = round($kpi->total_stock, 2);
+}
+
+// Count active reservations
+$kpi_reservations = 0;
+$sql_kpi_res = "SELECT COUNT(DISTINCT r.fk_commande) as total FROM " . MAIN_DB_PREFIX . "calcul_stock_reservation as r";
+$sql_kpi_res .= " INNER JOIN " . MAIN_DB_PREFIX . "commande as c ON r.fk_commande = c.rowid";
+$sql_kpi_res .= " WHERE r.status IN (0, 1)";
+if ($socid > 0) {
+    $sql_kpi_res .= " AND c.fk_soc = " . (int) $socid;
+}
+$resql_kpi_res = $db->query($sql_kpi_res);
+if ($resql_kpi_res) {
+    $kpi_reservations = $db->fetch_object($resql_kpi_res)->total;
+}
+
+// --- CSV Export (#6) ---
+if ($action == 'export_csv') {
+    $csv_sql = "SELECT p.ref, p.label, e.ref as warehouse_ref, e.description as warehouse_label, ps.reel as stock_physique";
+    $csv_sql .= " FROM " . MAIN_DB_PREFIX . "product_stock as ps";
+    $csv_sql .= " INNER JOIN " . MAIN_DB_PREFIX . "product as p ON ps.fk_product = p.rowid";
+    $csv_sql .= " INNER JOIN " . MAIN_DB_PREFIX . "entrepot as e ON ps.fk_entrepot = e.rowid";
+    if ($socid == 0) {
+        $csv_sql .= " INNER JOIN " . MAIN_DB_PREFIX . "clientstock_access as ca ON ps.fk_entrepot = ca.fk_entrepot";
+    }
+    $csv_where = str_replace("INNER_JOIN_PLACEHOLDER", "", $stock_where);
+    $csv_sql .= $csv_where;
+    $csv_sql .= " ORDER BY e.description ASC, p.ref ASC";
+
+    $resql_csv = $db->query($csv_sql);
+    if ($resql_csv) {
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="stock_export_' . date('Y-m-d_His') . '.csv"');
+        $output = fopen('php://output', 'w');
+        // BOM for Excel UTF-8
+        fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
+        fputcsv($output, array('Réf. Produit', 'Désignation', 'Entrepôt', 'Stock Physique'), ';');
+        while ($obj_csv = $db->fetch_object($resql_csv)) {
+            fputcsv($output, array(
+                $obj_csv->ref,
+                $obj_csv->label,
+                $obj_csv->warehouse_ref . ' - ' . $obj_csv->warehouse_label,
+                (float) round($obj_csv->stock_physique, 4)
+            ), ';');
+        }
+        fclose($output);
+        $db->close();
+        exit;
+    }
+}
+
 // Search bar form display
 print '<form method="GET" action="' . htmlspecialchars($_SERVER["PHP_SELF"]) . '" style="margin-bottom: 20px;" id="searchStockForm">';
 print '<div style="display: flex; gap: 12px; align-items: center; background: #f8fafc; padding: 14px 18px; border: 1px solid #cbd5e1; border-radius: 8px; flex-wrap: wrap; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">';
@@ -162,53 +254,26 @@ print '<div id="search_count_badge" style="margin-left: auto; font-size: 13px; c
 print '</div>';
 print '</form>';
 
-// 1. Fetch active/consumed reservations (cards) from calcul_stock module
-$sql_res = "SELECT DISTINCT c.rowid as order_id, c.ref as order_ref, c.date_commande,";
-if ($socid == 0) {
-    $sql_res .= " s.nom as client_name,";
-}
-$sql_res .= " cd.rowid as line_id, p.ref as product_ref, p.label as product_label, cd.qty";
-$sql_res .= " FROM " . MAIN_DB_PREFIX . "calcul_stock_reservation as r";
-$sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "commande as c ON r.fk_commande = c.rowid";
-if ($socid == 0) {
-    $sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "societe as s ON c.fk_soc = s.rowid";
-}
-$sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "commandedet as cd ON cd.fk_commande = c.rowid";
-$sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "product as p ON cd.fk_product = p.rowid";
-$sql_res .= " WHERE r.status IN (0, 1)";
-if ($socid > 0) {
-    $sql_res .= " AND c.fk_soc = " . (int) $socid;
-}
-if (!empty($search_keyword)) {
-    $search_esc = $db->escape(trim($search_keyword));
-    $sql_res .= " AND (c.ref LIKE '%" . $search_esc . "%' OR p.ref LIKE '%" . $search_esc . "%' OR p.label LIKE '%" . $search_esc . "%')";
-}
-$sql_res .= " ORDER BY c.date_commande DESC, c.ref DESC, p.ref ASC";
+// --- KPI Dashboard Cards (#4) ---
+print '<div style="display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 24px;">';
 
-$resql_res = $db->query($sql_res);
-$order_reservations = array();
-if ($resql_res) {
-    while ($obj = $db->fetch_object($resql_res)) {
-        $order_id = $obj->order_id;
-        if (!isset($order_reservations[$order_id])) {
-            $calculated_status = clientstock_calculate_order_reservation_status($db, $order_id);
-            $order_reservations[$order_id] = array(
-                'ref' => $obj->order_ref,
-                'date' => $obj->date_commande,
-                'status' => $calculated_status,
-                'client_name' => isset($obj->client_name) ? $obj->client_name : '',
-                'items' => array()
-            );
-        }
-        $order_reservations[$order_id]['items'][$obj->line_id] = array(
-            'product_ref' => $obj->product_ref,
-            'product_label' => $obj->product_label,
-            'qty' => $obj->qty
-        );
-    }
-}
+$kpi_cards = array(
+    array('icon' => '📦', 'label' => $langs->trans("TotalProducts"), 'value' => $kpi_products, 'color' => '#3b82f6', 'bg' => '#eff6ff'),
+    array('icon' => '🏭', 'label' => $langs->trans("TotalWarehouses"), 'value' => $kpi_warehouses, 'color' => '#8b5cf6', 'bg' => '#f5f3ff'),
+    array('icon' => '📊', 'label' => $langs->trans("TotalPhysicalStock"), 'value' => number_format($kpi_total_stock, 2, ',', ' '), 'color' => '#059669', 'bg' => '#ecfdf5'),
+    array('icon' => '📋', 'label' => $langs->trans("ActiveReservations"), 'value' => $kpi_reservations, 'color' => '#d97706', 'bg' => '#fffbeb'),
+);
 
-// Styling for cards and section titles
+foreach ($kpi_cards as $kpi_card) {
+    print '<div style="flex: 1 1 180px; min-width: 180px; background: ' . $kpi_card['bg'] . '; border: 1px solid ' . $kpi_card['color'] . '22; border-radius: 10px; padding: 16px 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); transition: transform 0.15s ease;">';
+    print '<div style="font-size: 24px; margin-bottom: 6px;">' . $kpi_card['icon'] . '</div>';
+    print '<div style="font-size: 24px; font-weight: 700; color: ' . $kpi_card['color'] . ';">' . $kpi_card['value'] . '</div>';
+    print '<div style="font-size: 12px; color: #64748b; margin-top: 2px;">' . htmlspecialchars($kpi_card['label']) . '</div>';
+    print '</div>';
+}
+print '</div>';
+
+// Styling for cards, section titles, stock levels, print, and mobile (#11, #12, #13)
 print '<style>
 .reservation-container {
     display: flex;
@@ -266,7 +331,82 @@ print '<style>
     padding-bottom: 6px;
     border-bottom: 2px solid #cbd5e1;
 }
+/* Stock level color coding (#11) */
+.stock-level-critical { color: #dc2626; font-weight: bold; }
+.stock-level-low { color: #ea580c; font-weight: bold; }
+.stock-level-medium { color: #ca8a04; }
+.stock-level-healthy { color: #16a34a; }
+/* Mobile responsive table (#12) */
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 16px;
+}
+/* Sortable column headers (#5) */
+.sortable-header {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+.sortable-header:hover {
+    text-decoration: underline;
+}
+.sort-arrow { font-size: 10px; margin-left: 4px; opacity: 0.5; }
+.sort-arrow.active { opacity: 1; }
+/* Print styles (#13) */
+@media print {
+    .reservation-container, #searchStockForm, .section-title, .button, .button-cancel,
+    #search_count_badge, .sort-arrow, .stock-toolbar { display: none !important; }
+    table.liste { font-size: 11px; }
+    table.liste td { padding: 4px 6px; border: 1px solid #ccc; }
+}
 </style>';
+
+// 1. Fetch active/consumed reservations (cards) from calcul_stock module
+$sql_res = "SELECT DISTINCT c.rowid as order_id, c.ref as order_ref, c.date_commande,";
+if ($socid == 0) {
+    $sql_res .= " s.nom as client_name,";
+}
+$sql_res .= " cd.rowid as line_id, p.ref as product_ref, p.label as product_label, cd.qty";
+$sql_res .= " FROM " . MAIN_DB_PREFIX . "calcul_stock_reservation as r";
+$sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "commande as c ON r.fk_commande = c.rowid";
+if ($socid == 0) {
+    $sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "societe as s ON c.fk_soc = s.rowid";
+}
+$sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "commandedet as cd ON cd.fk_commande = c.rowid";
+$sql_res .= " INNER JOIN " . MAIN_DB_PREFIX . "product as p ON cd.fk_product = p.rowid";
+$sql_res .= " WHERE r.status IN (0, 1)";
+if ($socid > 0) {
+    $sql_res .= " AND c.fk_soc = " . (int) $socid;
+}
+if (!empty($search_keyword)) {
+    $search_esc = $db->escape(trim($search_keyword));
+    $sql_res .= " AND (c.ref LIKE '%" . $search_esc . "%' OR p.ref LIKE '%" . $search_esc . "%' OR p.label LIKE '%" . $search_esc . "%')";
+}
+$sql_res .= " ORDER BY c.date_commande DESC, c.ref DESC, p.ref ASC";
+
+$resql_res = $db->query($sql_res);
+$order_reservations = array();
+if ($resql_res) {
+    while ($obj = $db->fetch_object($resql_res)) {
+        $order_id = $obj->order_id;
+        if (!isset($order_reservations[$order_id])) {
+            $calculated_status = clientstock_calculate_order_reservation_status($db, $order_id);
+            $order_reservations[$order_id] = array(
+                'ref' => $obj->order_ref,
+                'date' => $obj->date_commande,
+                'status' => $calculated_status,
+                'client_name' => isset($obj->client_name) ? $obj->client_name : '',
+                'items' => array()
+            );
+        }
+        $order_reservations[$order_id]['items'][$obj->line_id] = array(
+            'product_ref' => $obj->product_ref,
+            'product_label' => $obj->product_label,
+            'qty' => $obj->qty
+        );
+    }
+}
 
 // Display top reservations section
 print '<div class="section-title">' . $langs->trans("ReservationsTitle") . '</div>';
@@ -284,7 +424,7 @@ if (!empty($order_reservations)) {
         $formatted_date = dol_print_date($db->jdate($o_data['date']), 'day');
         print '<div class="reservation-card-date">' . $langs->trans("OrderDate") . ': ' . $formatted_date;
         if ($o_data['status'] !== null && $o_data['status'] !== '') {
-            print ' &nbsp; ' . get_reservation_status_badge($o_data['status']);
+            print ' &nbsp; ' . clientstock_get_reservation_status_badge($o_data['status']);
         }
         print '</div>';
         
@@ -299,21 +439,34 @@ if (!empty($order_reservations)) {
     }
     print '</div>';
 } else {
-    print '<div style="padding:14px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;color:#64748b;margin-bottom:30px;">';
-    print 'Aucune réservation de stock active.';
+    print '<div style="padding: 30px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; color: #64748b; margin-bottom: 30px; text-align: center;">';
+    print '<div style="font-size: 36px; margin-bottom: 8px;">📋</div>';
+    print '<div style="font-size: 14px;">Aucune réservation de stock active.</div>';
     print '</div>';
 }
 
 // 2. Display Stock Table Section
-print '<div class="section-title">' . $langs->trans("Stocks") . '</div>';
+print '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">';
+print '<div class="section-title" style="margin-bottom: 0;">' . $langs->trans("Stocks") . '</div>';
+print '<div class="stock-toolbar" style="display: flex; gap: 8px; align-items: center;">';
+// Export CSV button (#6)
+$export_url = $_SERVER["PHP_SELF"] . '?action=export_csv';
+if (!empty($search_keyword)) $export_url .= '&search_keyword=' . urlencode($search_keyword);
+if (!empty($search_entrepot)) $export_url .= '&search_entrepot=' . (int) $search_entrepot;
+print '<a href="' . htmlspecialchars($export_url) . '" class="button" style="padding: 6px 14px; font-size: 12px; text-decoration: none;" title="' . $langs->trans("ExportCSV") . '">📥 ' . $langs->trans("ExportCSV") . '</a>';
+// Print button (#13)
+print '<a href="javascript:window.print()" class="button" style="padding: 6px 14px; font-size: 12px; text-decoration: none;">🖨️ Imprimer</a>';
+print '</div>';
+print '</div>';
 
+// Stock query with pagination (#7)
 $sql = "SELECT p.rowid as fk_product, p.ref, p.label, e.rowid as entrepot_id, e.ref as warehouse_ref, e.description as warehouse_label, ps.reel as stock_physique";
 $sql .= " FROM " . MAIN_DB_PREFIX . "product_stock as ps";
 $sql .= " INNER JOIN " . MAIN_DB_PREFIX . "product as p ON ps.fk_product = p.rowid";
 $sql .= " INNER JOIN " . MAIN_DB_PREFIX . "entrepot as e ON ps.fk_entrepot = e.rowid";
 
 if ($socid > 0) {
-    $sql .= " WHERE ps.fk_entrepot IN (" . implode(',', $allowed_entrepots) . ")";
+    $sql .= " WHERE ps.fk_entrepot IN (" . implode(',', array_map('intval', $allowed_entrepots)) . ")";
     $sql .= " AND ps.reel != 0";
 } else {
     $sql .= " INNER JOIN " . MAIN_DB_PREFIX . "clientstock_access as ca ON ps.fk_entrepot = ca.fk_entrepot";
@@ -331,41 +484,99 @@ if (!empty($search_keyword)) {
 
 $sql .= " ORDER BY e.description ASC, p.ref ASC";
 
+// Get total count for pagination
+$sql_count = preg_replace('/^SELECT .+ FROM /s', 'SELECT COUNT(*) as total FROM ', $sql);
+$sql_count = preg_replace('/ORDER BY .+$/s', '', $sql_count);
+$resql_count = $db->query($sql_count);
+$total_records = 0;
+if ($resql_count) {
+    $total_records = $db->fetch_object($resql_count)->total;
+}
+$total_pages = ceil($total_records / $limit);
+
+$sql .= " LIMIT " . $limit . " OFFSET " . $offset;
+
 $resql = $db->query($sql);
 
 if ($resql) {
     $num = $db->num_rows($resql);
 
+    // Mobile responsive wrapper (#12)
+    print '<div class="table-responsive">';
     print '<table class="liste centpercent" id="stock_list_table">';
     print '<tr class="liste_titre">';
-    print '<td>' . $langs->trans("ProductRef") . '</td>';
-    print '<td>' . $langs->trans("ProductLabel") . '</td>';
-    print '<td>' . $langs->trans("Warehouse") . '</td>';
-    print '<td align="right">' . $langs->trans("PhysicalStock") . '</td>';
+    print '<td class="sortable-header" data-col="0">' . $langs->trans("ProductRef") . ' <span class="sort-arrow">▲▼</span></td>';
+    print '<td class="sortable-header" data-col="1">' . $langs->trans("ProductLabel") . ' <span class="sort-arrow">▲▼</span></td>';
+    print '<td class="sortable-header" data-col="2">' . $langs->trans("Warehouse") . ' <span class="sort-arrow">▲▼</span></td>';
+    print '<td align="right" class="sortable-header" data-col="3">' . $langs->trans("PhysicalStock") . ' <span class="sort-arrow">▲▼</span></td>';
     print '</tr>';
 
     if ($num > 0) {
         $i = 0;
         while ($i < $num) {
             $obj = $db->fetch_object($resql);
+            $stock_val = (float) round($obj->stock_physique, 4);
+            $stock_class = clientstock_get_stock_level_class($stock_val);
             $search_data = htmlspecialchars(strtolower($obj->ref . ' ' . $obj->label . ' ' . $obj->warehouse_ref . ' ' . $obj->warehouse_label));
             print '<tr class="oddeven stock-row" data-entrepot-id="' . $obj->entrepot_id . '" data-search="' . $search_data . '">';
             print '<td>' . htmlspecialchars($obj->ref) . '</td>';
             print '<td>' . htmlspecialchars($obj->label) . '</td>';
             print '<td>' . htmlspecialchars($obj->warehouse_ref . ' - ' . $obj->warehouse_label) . '</td>';
-            print '<td align="right">' . ((float) round($obj->stock_physique, 4)) . '</td>';
+            print '<td align="right" class="' . $stock_class . '">' . $stock_val . '</td>';
             print '</tr>';
             $i++;
         }
     } else {
-        print '<tr id="no_stock_row"><td colspan="4"><span class="opacitymedium">' . $langs->trans("NoRecordFound") . '</span></td></tr>';
+        // Improved empty state (#9)
+        print '<tr id="no_stock_row"><td colspan="4" style="text-align: center; padding: 30px;">';
+        print '<div style="font-size: 36px; margin-bottom: 8px;">📦</div>';
+        print '<span class="opacitymedium">' . $langs->trans("NoRecordFound") . '</span>';
+        print '</td></tr>';
     }
     print '</table>';
+    print '</div>';
+
+    // Pagination controls (#7)
+    if ($total_pages > 1) {
+        print '<div style="display: flex; justify-content: center; align-items: center; gap: 6px; margin: 16px 0; flex-wrap: wrap;">';
+        $base_url = $_SERVER["PHP_SELF"] . '?';
+        $params = array();
+        if (!empty($search_keyword)) $params[] = 'search_keyword=' . urlencode($search_keyword);
+        if (!empty($search_entrepot)) $params[] = 'search_entrepot=' . (int) $search_entrepot;
+        $base_url .= implode('&', $params);
+        $sep = empty($params) ? '' : '&';
+
+        if ($page > 0) {
+            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=0') . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none;">«</a>';
+            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=' . ($page - 1)) . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none;">‹</a>';
+        }
+
+        // Show page numbers (max 7 visible)
+        $start_page = max(0, $page - 3);
+        $end_page = min($total_pages - 1, $page + 3);
+        for ($p = $start_page; $p <= $end_page; $p++) {
+            $active_style = ($p == $page) ? 'background: #3b82f6; color: #fff; border-color: #3b82f6;' : '';
+            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=' . $p) . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none; ' . $active_style . '">' . ($p + 1) . '</a>';
+        }
+
+        if ($page < $total_pages - 1) {
+            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=' . ($page + 1)) . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none;">›</a>';
+            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=' . ($total_pages - 1)) . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none;">»</a>';
+        }
+
+        print '<span style="font-size: 12px; color: #64748b; margin-left: 8px;">(' . $total_records . ' résultats)</span>';
+        print '</div>';
+    }
 } else {
     dol_print_error($db);
 }
 
-// Inline JavaScript for Instant Real-Time Search & Live Count
+// Last updated timestamp (#8)
+print '<div style="text-align: right; font-size: 11px; color: #94a3b8; margin-top: 10px; margin-bottom: 16px;">';
+print $langs->trans("LastUpdated") . ': ' . dol_print_date(dol_now(), 'dayhour');
+print '</div>';
+
+// Inline JavaScript for Instant Real-Time Search, Live Count, and Sortable Columns (#5)
 print '<script type="text/javascript">
 document.addEventListener("DOMContentLoaded", function() {
     var searchInput = document.getElementById("clientstock_search");
@@ -425,6 +636,59 @@ document.addEventListener("DOMContentLoaded", function() {
         entrepotSelect.addEventListener("change", filterStockList);
     }
     filterStockList();
+
+    // Sortable columns (#5)
+    var sortState = { col: -1, asc: true };
+    document.querySelectorAll(".sortable-header").forEach(function(header) {
+        header.addEventListener("click", function() {
+            var colIdx = parseInt(this.getAttribute("data-col"));
+            if (sortState.col === colIdx) {
+                sortState.asc = !sortState.asc;
+            } else {
+                sortState.col = colIdx;
+                sortState.asc = true;
+            }
+
+            var table = document.getElementById("stock_list_table");
+            var tbody = table.querySelector("tbody") || table;
+            var rows = Array.from(tbody.querySelectorAll("tr.stock-row"));
+
+            rows.sort(function(a, b) {
+                var aCell = a.cells[colIdx];
+                var bCell = b.cells[colIdx];
+                if (!aCell || !bCell) return 0;
+                var aVal = aCell.textContent.trim();
+                var bVal = bCell.textContent.trim();
+
+                // Numeric sort for last column (stock qty)
+                if (colIdx === 3) {
+                    aVal = parseFloat(aVal.replace(/,/g, ".").replace(/\s/g, "")) || 0;
+                    bVal = parseFloat(bVal.replace(/,/g, ".").replace(/\s/g, "")) || 0;
+                    return sortState.asc ? aVal - bVal : bVal - aVal;
+                }
+
+                // String sort
+                aVal = aVal.toLowerCase();
+                bVal = bVal.toLowerCase();
+                if (aVal < bVal) return sortState.asc ? -1 : 1;
+                if (aVal > bVal) return sortState.asc ? 1 : -1;
+                return 0;
+            });
+
+            rows.forEach(function(row) { tbody.appendChild(row); });
+
+            // Update arrow indicators
+            document.querySelectorAll(".sort-arrow").forEach(function(a) {
+                a.className = "sort-arrow";
+                a.textContent = "▲▼";
+            });
+            var activeArrow = header.querySelector(".sort-arrow");
+            if (activeArrow) {
+                activeArrow.className = "sort-arrow active";
+                activeArrow.textContent = sortState.asc ? "▲" : "▼";
+            }
+        });
+    });
 });
 </script>';
 

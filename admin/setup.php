@@ -12,11 +12,15 @@ $action = GETPOST('action', 'aZ09');
 
 // Add new access
 if ($action == 'add') {
+    if (!verifCond('1')) {
+        // Token check handled by Dolibarr's CSRF mechanism
+    }
+
     $fk_soc = GETPOST('fk_soc', 'int');
     $fk_entrepot = GETPOST('fk_entrepot', 'int');
 
     if ($fk_soc > 0 && $fk_entrepot > 0) {
-        $sql = "INSERT INTO " . MAIN_DB_PREFIX . "clientstock_access (fk_soc, fk_entrepot) VALUES (" . $fk_soc . ", " . $fk_entrepot . ")";
+        $sql = "INSERT INTO " . MAIN_DB_PREFIX . "clientstock_access (fk_soc, fk_entrepot, datec, fk_user_creat) VALUES (" . ((int) $fk_soc) . ", " . ((int) $fk_entrepot) . ", '" . $db->idate(dol_now()) . "', " . ((int) $user->id) . ")";
         $resql = $db->query($sql);
         if ($resql) {
             setEventMessages("Accès ajouté avec succès", null, 'mesgs');
@@ -36,7 +40,7 @@ if ($action == 'add') {
 if ($action == 'delete') {
     $rowid = GETPOST('rowid', 'int');
     if ($rowid > 0) {
-        $sql = "DELETE FROM " . MAIN_DB_PREFIX . "clientstock_access WHERE rowid = " . $rowid;
+        $sql = "DELETE FROM " . MAIN_DB_PREFIX . "clientstock_access WHERE rowid = " . ((int) $rowid);
         $resql = $db->query($sql);
         if ($resql) {
             setEventMessages("Accès supprimé", null, 'mesgs');
@@ -73,7 +77,7 @@ print '</td>';
 print '<td>';
 $sql_w = "SELECT rowid, ref, lieu FROM " . MAIN_DB_PREFIX . "entrepot WHERE 1 = 1";
 if (isset($conf->entity)) {
-    $sql_w .= " AND entity = " . $conf->entity;
+    $sql_w .= " AND entity = " . ((int) $conf->entity);
 }
 $sql_w .= " ORDER BY ref";
 $resql_w = $db->query($sql_w);
@@ -110,17 +114,21 @@ $sql .= " ORDER BY s.nom ASC";
 $resql = $db->query($sql);
 if ($resql) {
     $num = $db->num_rows($resql);
-    $i = 0;
-    while ($i < $num) {
-        $obj = $db->fetch_object($resql);
-        print '<tr class="oddeven">';
-        print '<td>' . $obj->client_name . '</td>';
-        print '<td>' . $obj->warehouse_ref . ' - ' . $obj->warehouse_label . '</td>';
-        print '<td align="center">';
-        print '<a href="' . $_SERVER["PHP_SELF"] . '?action=delete&rowid=' . $obj->rowid . '&token=' . newToken() . '">' . img_delete() . '</a>';
-        print '</td>';
-        print '</tr>';
-        $i++;
+    if ($num > 0) {
+        $i = 0;
+        while ($i < $num) {
+            $obj = $db->fetch_object($resql);
+            print '<tr class="oddeven">';
+            print '<td>' . htmlspecialchars($obj->client_name) . '</td>';
+            print '<td>' . htmlspecialchars($obj->warehouse_ref . ' - ' . $obj->warehouse_label) . '</td>';
+            print '<td align="center">';
+            print '<a href="' . $_SERVER["PHP_SELF"] . '?action=delete&rowid=' . $obj->rowid . '&token=' . newToken() . '" onclick="return confirm(\'Êtes-vous sûr de vouloir supprimer cet accès ?\')">' . img_delete() . '</a>';
+            print '</td>';
+            print '</tr>';
+            $i++;
+        }
+    } else {
+        print '<tr class="oddeven"><td colspan="3"><span class="opacitymedium">Aucun accès configuré</span></td></tr>';
     }
 }
 

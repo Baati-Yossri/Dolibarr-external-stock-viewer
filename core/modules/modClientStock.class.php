@@ -92,8 +92,8 @@ class modClientStock extends DolibarrModules
 
     public function init($options = '')
     {
-        $sql = array();
-        return $this->_init($sql, $options);
+        $result = $this->_load_tables('/clientstock/sql/');
+        return $this->_init(array(), $options);
     }
 
     public function remove($options = '')

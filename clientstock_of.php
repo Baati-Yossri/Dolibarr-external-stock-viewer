@@ -1,5 +1,6 @@
 <?php
 require '../../main.inc.php';
+require_once DOL_DOCUMENT_ROOT . '/custom/clientstock/lib/clientstock.lib.php';
 
 $langs->loadLangs(array("clientstock@clientstock", "products", "stocks"));
 
@@ -14,6 +15,14 @@ $search_keyword = GETPOST('search_keyword', 'alphanohtml');
 llxHeader('', $langs->trans("OfInProduction"));
 
 print load_fiche_titre($langs->trans("OfInProduction"), '', 'object_stock');
+
+// Admin preview banner (#15)
+if ($socid == 0 && !empty($user->admin)) {
+    print '<div style="background: linear-gradient(135deg, #fef3c7, #fde68a); border: 1px solid #f59e0b; border-radius: 8px; padding: 12px 18px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; font-size: 13px; color: #92400e;">';
+    print '<span style="font-size: 18px;">⚠️</span>';
+    print '<span>' . $langs->trans("AdminPreviewBanner") . '</span>';
+    print '</div>';
+}
 
 if ($socid == 0 && empty($user->admin)) {
     print '<div class="warning">' . $langs->trans("OnlyExternalUsersCanAccess") . '</div>';
@@ -80,40 +89,50 @@ if ($socid > 0) {
 
 $resql = $db->query($sql);
 
-function get_prod_status_badge($status) {
-    if (empty($status) || $status == 'todo') {
-        return '<span class="badge badge-warning" style="background-color: #f0ad4e; color: #fff; padding: 2px 6px; border-radius: 3px;">En attente</span>';
-    } elseif ($status == 'encours' || $status == 'en_cours' || $status == 'lance') {
-        return '<span class="badge badge-info" style="background-color: #5bc0de; color: #fff; padding: 2px 6px; border-radius: 3px;">En cours</span>';
-    } elseif ($status == 'termine') {
-        return '<span class="badge badge-success" style="background-color: #5cb85c; color: #fff; padding: 2px 6px; border-radius: 3px;">Terminé</span>';
-    }
-    return '<span class="badge badge-secondary" style="background-color: #777; color: #fff; padding: 2px 6px; border-radius: 3px;">' . ucfirst(str_replace('_', ' ', $status)) . '</span>';
+// Styles for sortable columns, mobile responsiveness, and print (#5, #12, #13)
+print '<style>
+.sortable-header {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
 }
-
-function get_control_status_badge($status) {
-    if (empty($status) || $status == 'todo') {
-        return '<span class="badge badge-warning" style="background-color: #f0ad4e; color: #fff; padding: 2px 6px; border-radius: 3px;">En attente</span>';
-    } elseif ($status == 'encours' || $status == 'en_cours' || $status == 'lance') {
-        return '<span class="badge badge-info" style="background-color: #5bc0de; color: #fff; padding: 2px 6px; border-radius: 3px;">En cours</span>';
-    } elseif ($status == 'termine') {
-        return '<span class="badge badge-success" style="background-color: #5cb85c; color: #fff; padding: 2px 6px; border-radius: 3px;">Terminé</span>';
-    }
-    return '<span class="badge badge-secondary" style="background-color: #777; color: #fff; padding: 2px 6px; border-radius: 3px;">' . ucfirst(str_replace('_', ' ', $status)) . '</span>';
+.sortable-header:hover {
+    text-decoration: underline;
 }
+.sort-arrow { font-size: 10px; margin-left: 4px; opacity: 0.5; }
+.sort-arrow.active { opacity: 1; }
+.table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin-bottom: 16px;
+}
+@media print {
+    #searchOFForm, .sort-arrow { display: none !important; }
+    table.liste { font-size: 11px; }
+    table.liste td { padding: 4px 6px; border: 1px solid #ccc; }
+}
+</style>';
 
 if ($resql) {
     $num = $db->num_rows($resql);
 
+    // Mobile responsive wrapper (#12)
+    print '<div class="table-responsive">';
     print '<table class="liste centpercent" id="of_list_table">';
     print '<tr class="liste_titre">';
+    $col_offset = 0;
     if ($socid == 0) {
-        print '<td>' . $langs->trans("Client") . '</td>';
+        print '<td class="sortable-header" data-col="' . $col_offset . '">' . $langs->trans("Client") . ' <span class="sort-arrow">▲▼</span></td>';
+        $col_offset++;
     }
-    print '<td>' . $langs->trans("OFRef") . '</td>';
-    print '<td>' . $langs->trans("OrderRef") . '</td>';
+    print '<td class="sortable-header" data-col="' . $col_offset . '">' . $langs->trans("OFRef") . ' <span class="sort-arrow">▲▼</span></td>';
+    $col_offset++;
+    print '<td class="sortable-header" data-col="' . $col_offset . '">' . $langs->trans("OrderRef") . ' <span class="sort-arrow">▲▼</span></td>';
+    $col_offset++;
     print '<td>' . $langs->trans("Article") . '</td>';
-    print '<td align="right">' . $langs->trans("Quantity") . '</td>';
+    $col_offset++;
+    print '<td align="right" class="sortable-header" data-col="' . $col_offset . '">' . $langs->trans("Quantity") . ' <span class="sort-arrow">▲▼</span></td>';
+    $col_offset++;
     print '<td align="center">' . $langs->trans("StatusProd") . '</td>';
     print '<td align="center">' . $langs->trans("StatusControl") . '</td>';
     print '</tr>';
@@ -191,20 +210,30 @@ if ($resql) {
             print '</td>';
             
             print '<td align="right">' . ((float) round($of['total_qty'], 4)) . '</td>';
-            print '<td align="center">' . get_prod_status_badge($of['production_status']) . '</td>';
-            print '<td align="center">' . get_control_status_badge($of['control_status']) . '</td>';
+            print '<td align="center">' . clientstock_get_workflow_status_badge($of['production_status']) . '</td>';
+            print '<td align="center">' . clientstock_get_workflow_status_badge($of['control_status']) . '</td>';
             print '</tr>';
         }
     } else {
+        // Improved empty state (#9)
         $colspan = ($socid == 0) ? 7 : 6;
-        print '<tr id="no_of_row"><td colspan="' . $colspan . '"><span class="opacitymedium">' . $langs->trans("NoOFFound") . '</span></td></tr>';
+        print '<tr id="no_of_row"><td colspan="' . $colspan . '" style="text-align: center; padding: 30px;">';
+        print '<div style="font-size: 36px; margin-bottom: 8px;">🏭</div>';
+        print '<span class="opacitymedium">' . $langs->trans("NoOFFound") . '</span>';
+        print '</td></tr>';
     }
     print '</table>';
+    print '</div>';
 } else {
     dol_print_error($db);
 }
 
-// Inline JavaScript for Instant Real-Time Search & Live Count
+// Last updated timestamp (#8)
+print '<div style="text-align: right; font-size: 11px; color: #94a3b8; margin-top: 10px; margin-bottom: 16px;">';
+print $langs->trans("LastUpdated") . ': ' . dol_print_date(dol_now(), 'dayhour');
+print '</div>';
+
+// Inline JavaScript for Instant Real-Time Search, Live Count, and Sortable Columns (#5)
 print '<script type="text/javascript">
 document.addEventListener("DOMContentLoaded", function() {
     var searchInput = document.getElementById("clientstock_of_search");
@@ -235,6 +264,57 @@ document.addEventListener("DOMContentLoaded", function() {
         searchInput.addEventListener("keyup", filterOFList);
     }
     filterOFList();
+
+    // Sortable columns (#5)
+    var sortState = { col: -1, asc: true };
+    document.querySelectorAll(".sortable-header").forEach(function(header) {
+        header.addEventListener("click", function() {
+            var colIdx = parseInt(this.getAttribute("data-col"));
+            if (sortState.col === colIdx) {
+                sortState.asc = !sortState.asc;
+            } else {
+                sortState.col = colIdx;
+                sortState.asc = true;
+            }
+
+            var table = document.getElementById("of_list_table");
+            var tbody = table.querySelector("tbody") || table;
+            var rows = Array.from(tbody.querySelectorAll("tr.of-row"));
+
+            rows.sort(function(a, b) {
+                var aCell = a.cells[colIdx];
+                var bCell = b.cells[colIdx];
+                if (!aCell || !bCell) return 0;
+                var aVal = aCell.textContent.trim();
+                var bVal = bCell.textContent.trim();
+
+                // Numeric sort for quantity column
+                var numA = parseFloat(aVal.replace(/,/g, ".").replace(/\s/g, ""));
+                var numB = parseFloat(bVal.replace(/,/g, ".").replace(/\s/g, ""));
+                if (!isNaN(numA) && !isNaN(numB) && aVal.match(/^[\d\s.,]+$/)) {
+                    return sortState.asc ? numA - numB : numB - numA;
+                }
+
+                aVal = aVal.toLowerCase();
+                bVal = bVal.toLowerCase();
+                if (aVal < bVal) return sortState.asc ? -1 : 1;
+                if (aVal > bVal) return sortState.asc ? 1 : -1;
+                return 0;
+            });
+
+            rows.forEach(function(row) { tbody.appendChild(row); });
+
+            document.querySelectorAll(".sort-arrow").forEach(function(a) {
+                a.className = "sort-arrow";
+                a.textContent = "▲▼";
+            });
+            var activeArrow = header.querySelector(".sort-arrow");
+            if (activeArrow) {
+                activeArrow.className = "sort-arrow active";
+                activeArrow.textContent = sortState.asc ? "▲" : "▼";
+            }
+        });
+    });
 });
 </script>';
 
