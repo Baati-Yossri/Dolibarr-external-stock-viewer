@@ -13,10 +13,6 @@ $socid = $user->socid;
 
 $search_keyword = GETPOST('search_keyword', 'alphanohtml');
 $search_entrepot = GETPOST('search_entrepot', 'int');
-$page = GETPOST('page', 'int');
-$limit = 50;
-if (empty($page) || $page < 0) $page = 0;
-$offset = $limit * $page;
 
 // Export CSV action
 $action = GETPOST('action', 'aZ09');
@@ -157,39 +153,6 @@ function clientstock_build_stock_where($db, $socid, $allowed_entrepots, $search_
 
 $stock_where = clientstock_build_stock_where($db, $socid, $allowed_entrepots, $search_entrepot, $search_keyword);
 
-// --- KPI Queries (#4) ---
-$kpi_sql_base = "SELECT COUNT(DISTINCT p.rowid) as total_products, COUNT(DISTINCT e.rowid) as total_warehouses, COALESCE(SUM(ps.reel), 0) as total_stock";
-$kpi_sql_base .= " FROM " . MAIN_DB_PREFIX . "product_stock as ps";
-$kpi_sql_base .= " INNER JOIN " . MAIN_DB_PREFIX . "product as p ON ps.fk_product = p.rowid";
-$kpi_sql_base .= " INNER JOIN " . MAIN_DB_PREFIX . "entrepot as e ON ps.fk_entrepot = e.rowid";
-if ($socid == 0) {
-    $kpi_sql_base .= " INNER JOIN " . MAIN_DB_PREFIX . "clientstock_access as ca ON ps.fk_entrepot = ca.fk_entrepot";
-}
-$kpi_where = str_replace("INNER_JOIN_PLACEHOLDER", "", $stock_where);
-$kpi_sql = $kpi_sql_base . $kpi_where;
-
-$kpi_products = 0; $kpi_warehouses = 0; $kpi_total_stock = 0;
-$resql_kpi = $db->query($kpi_sql);
-if ($resql_kpi) {
-    $kpi = $db->fetch_object($resql_kpi);
-    $kpi_products = $kpi->total_products;
-    $kpi_warehouses = $kpi->total_warehouses;
-    $kpi_total_stock = round($kpi->total_stock, 2);
-}
-
-// Count active reservations
-$kpi_reservations = 0;
-$sql_kpi_res = "SELECT COUNT(DISTINCT r.fk_commande) as total FROM " . MAIN_DB_PREFIX . "calcul_stock_reservation as r";
-$sql_kpi_res .= " INNER JOIN " . MAIN_DB_PREFIX . "commande as c ON r.fk_commande = c.rowid";
-$sql_kpi_res .= " WHERE r.status IN (0, 1)";
-if ($socid > 0) {
-    $sql_kpi_res .= " AND c.fk_soc = " . (int) $socid;
-}
-$resql_kpi_res = $db->query($sql_kpi_res);
-if ($resql_kpi_res) {
-    $kpi_reservations = $db->fetch_object($resql_kpi_res)->total;
-}
-
 // --- CSV Export (#6) ---
 if ($action == 'export_csv') {
     $csv_sql = "SELECT p.ref, p.label, e.ref as warehouse_ref, e.description as warehouse_label, ps.reel as stock_physique";
@@ -254,24 +217,7 @@ print '<div id="search_count_badge" style="margin-left: auto; font-size: 13px; c
 print '</div>';
 print '</form>';
 
-// --- KPI Dashboard Cards (#4) ---
-print '<div style="display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 24px;">';
 
-$kpi_cards = array(
-    array('icon' => '📦', 'label' => $langs->trans("TotalProducts"), 'value' => $kpi_products, 'color' => '#3b82f6', 'bg' => '#eff6ff'),
-    array('icon' => '🏭', 'label' => $langs->trans("TotalWarehouses"), 'value' => $kpi_warehouses, 'color' => '#8b5cf6', 'bg' => '#f5f3ff'),
-    array('icon' => '📊', 'label' => $langs->trans("TotalPhysicalStock"), 'value' => number_format($kpi_total_stock, 2, ',', ' '), 'color' => '#059669', 'bg' => '#ecfdf5'),
-    array('icon' => '📋', 'label' => $langs->trans("ActiveReservations"), 'value' => $kpi_reservations, 'color' => '#d97706', 'bg' => '#fffbeb'),
-);
-
-foreach ($kpi_cards as $kpi_card) {
-    print '<div style="flex: 1 1 180px; min-width: 180px; background: ' . $kpi_card['bg'] . '; border: 1px solid ' . $kpi_card['color'] . '22; border-radius: 10px; padding: 16px 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); transition: transform 0.15s ease;">';
-    print '<div style="font-size: 24px; margin-bottom: 6px;">' . $kpi_card['icon'] . '</div>';
-    print '<div style="font-size: 24px; font-weight: 700; color: ' . $kpi_card['color'] . ';">' . $kpi_card['value'] . '</div>';
-    print '<div style="font-size: 12px; color: #64748b; margin-top: 2px;">' . htmlspecialchars($kpi_card['label']) . '</div>';
-    print '</div>';
-}
-print '</div>';
 
 // Styling for cards, section titles, stock levels, print, and mobile (#11, #12, #13)
 print '<style>
@@ -484,17 +430,7 @@ if (!empty($search_keyword)) {
 
 $sql .= " ORDER BY e.description ASC, p.ref ASC";
 
-// Get total count for pagination
-$sql_count = preg_replace('/^SELECT .+ FROM /s', 'SELECT COUNT(*) as total FROM ', $sql);
-$sql_count = preg_replace('/ORDER BY .+$/s', '', $sql_count);
-$resql_count = $db->query($sql_count);
-$total_records = 0;
-if ($resql_count) {
-    $total_records = $db->fetch_object($resql_count)->total;
-}
-$total_pages = ceil($total_records / $limit);
 
-$sql .= " LIMIT " . $limit . " OFFSET " . $offset;
 
 $resql = $db->query($sql);
 
@@ -536,37 +472,7 @@ if ($resql) {
     print '</table>';
     print '</div>';
 
-    // Pagination controls (#7)
-    if ($total_pages > 1) {
-        print '<div style="display: flex; justify-content: center; align-items: center; gap: 6px; margin: 16px 0; flex-wrap: wrap;">';
-        $base_url = $_SERVER["PHP_SELF"] . '?';
-        $params = array();
-        if (!empty($search_keyword)) $params[] = 'search_keyword=' . urlencode($search_keyword);
-        if (!empty($search_entrepot)) $params[] = 'search_entrepot=' . (int) $search_entrepot;
-        $base_url .= implode('&', $params);
-        $sep = empty($params) ? '' : '&';
 
-        if ($page > 0) {
-            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=0') . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none;">«</a>';
-            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=' . ($page - 1)) . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none;">‹</a>';
-        }
-
-        // Show page numbers (max 7 visible)
-        $start_page = max(0, $page - 3);
-        $end_page = min($total_pages - 1, $page + 3);
-        for ($p = $start_page; $p <= $end_page; $p++) {
-            $active_style = ($p == $page) ? 'background: #3b82f6; color: #fff; border-color: #3b82f6;' : '';
-            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=' . $p) . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none; ' . $active_style . '">' . ($p + 1) . '</a>';
-        }
-
-        if ($page < $total_pages - 1) {
-            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=' . ($page + 1)) . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none;">›</a>';
-            print '<a href="' . htmlspecialchars($base_url . $sep . 'page=' . ($total_pages - 1)) . '" class="button" style="padding: 4px 10px; font-size: 12px; text-decoration: none;">»</a>';
-        }
-
-        print '<span style="font-size: 12px; color: #64748b; margin-left: 8px;">(' . $total_records . ' résultats)</span>';
-        print '</div>';
-    }
 } else {
     dol_print_error($db);
 }
