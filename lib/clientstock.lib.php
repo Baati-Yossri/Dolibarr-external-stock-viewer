@@ -36,7 +36,7 @@ function clientstock_get_workflow_status_badge($status) {
     } elseif ($status == 'termine') {
         return '<span class="badge badge-success" style="background-color: #5cb85c; color: #fff; padding: 2px 6px; border-radius: 3px;">Terminé</span>';
     }
-    return '<span class="badge badge-secondary" style="background-color: #777; color: #fff; padding: 2px 6px; border-radius: 3px;">' . ucfirst(str_replace('_', ' ', $status)) . '</span>';
+    return '<span class="badge badge-secondary" style="background-color: #777; color: #fff; padding: 2px 6px; border-radius: 3px;">' . htmlspecialchars(ucfirst(str_replace('_', ' ', $status))) . '</span>';
 }
 
 /**
