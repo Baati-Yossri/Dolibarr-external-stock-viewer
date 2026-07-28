@@ -17,6 +17,23 @@ $search_entrepot = GETPOST('search_entrepot', 'int');
 // Export CSV action
 $action = GETPOST('action', 'aZ09');
 
+// Get allowed warehouses for the user's company (or all if admin)
+$allowed_entrepots = array();
+if ($socid > 0) {
+    $sql = "SELECT fk_entrepot FROM " . MAIN_DB_PREFIX . "clientstock_access WHERE fk_soc = " . (int) $socid;
+    $resql = $db->query($sql);
+    if ($resql) {
+        while ($obj = $db->fetch_object($resql)) {
+            $allowed_entrepots[] = (int) $obj->fk_entrepot;
+        }
+    }
+}
+
+// --- Excel Export (#6) ---
+if ($action == 'export_csv') {
+    require_once DOL_DOCUMENT_ROOT . '/custom/clientstock/clientstock_export_excel.php';
+}
+
 llxHeader('', $langs->trans("MyStock"));
 
 print load_fiche_titre($langs->trans("MyStock"), '', 'object_stock');
@@ -34,18 +51,6 @@ if ($socid == 0 && empty($user->admin)) {
     llxFooter();
     $db->close();
     exit;
-}
-
-// Get allowed warehouses for the user's company (or all if admin)
-$allowed_entrepots = array();
-if ($socid > 0) {
-    $sql = "SELECT fk_entrepot FROM " . MAIN_DB_PREFIX . "clientstock_access WHERE fk_soc = " . (int) $socid;
-    $resql = $db->query($sql);
-    if ($resql) {
-        while ($obj = $db->fetch_object($resql)) {
-            $allowed_entrepots[] = (int) $obj->fk_entrepot;
-        }
-    }
 }
 
 // If external user has no warehouses assigned
@@ -153,40 +158,6 @@ function clientstock_build_stock_where($db, $socid, $allowed_entrepots, $search_
 
 $stock_where = clientstock_build_stock_where($db, $socid, $allowed_entrepots, $search_entrepot, $search_keyword);
 
-// --- CSV Export (#6) ---
-if ($action == 'export_csv') {
-    $csv_sql = "SELECT p.ref, p.label, e.ref as warehouse_ref, e.description as warehouse_label, ps.reel as stock_physique";
-    $csv_sql .= " FROM " . MAIN_DB_PREFIX . "product_stock as ps";
-    $csv_sql .= " INNER JOIN " . MAIN_DB_PREFIX . "product as p ON ps.fk_product = p.rowid";
-    $csv_sql .= " INNER JOIN " . MAIN_DB_PREFIX . "entrepot as e ON ps.fk_entrepot = e.rowid";
-    if ($socid == 0) {
-        $csv_sql .= " INNER JOIN " . MAIN_DB_PREFIX . "clientstock_access as ca ON ps.fk_entrepot = ca.fk_entrepot";
-    }
-    $csv_where = str_replace("INNER_JOIN_PLACEHOLDER", "", $stock_where);
-    $csv_sql .= $csv_where;
-    $csv_sql .= " ORDER BY e.description ASC, p.ref ASC";
-
-    $resql_csv = $db->query($csv_sql);
-    if ($resql_csv) {
-        header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename="stock_export_' . date('Y-m-d_His') . '.csv"');
-        $output = fopen('php://output', 'w');
-        // BOM for Excel UTF-8
-        fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
-        fputcsv($output, array('Réf. Produit', 'Désignation', 'Entrepôt', 'Stock Physique'), ';');
-        while ($obj_csv = $db->fetch_object($resql_csv)) {
-            fputcsv($output, array(
-                $obj_csv->ref,
-                $obj_csv->label,
-                $obj_csv->warehouse_ref . ' - ' . $obj_csv->warehouse_label,
-                (float) round($obj_csv->stock_physique, 4)
-            ), ';');
-        }
-        fclose($output);
-        $db->close();
-        exit;
-    }
-}
 
 // Search bar form display
 print '<form method="GET" action="' . htmlspecialchars($_SERVER["PHP_SELF"]) . '" style="margin-bottom: 20px;" id="searchStockForm">';
@@ -395,11 +366,11 @@ if (!empty($order_reservations)) {
 print '<div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">';
 print '<div class="section-title" style="margin-bottom: 0;">' . $langs->trans("Stocks") . '</div>';
 print '<div class="stock-toolbar" style="display: flex; gap: 8px; align-items: center;">';
-// Export CSV button (#6)
+// Export Excel button (#6)
 $export_url = $_SERVER["PHP_SELF"] . '?action=export_csv';
 if (!empty($search_keyword)) $export_url .= '&search_keyword=' . urlencode($search_keyword);
 if (!empty($search_entrepot)) $export_url .= '&search_entrepot=' . (int) $search_entrepot;
-print '<a href="' . htmlspecialchars($export_url) . '" class="button" style="padding: 6px 14px; font-size: 12px; text-decoration: none;" title="' . $langs->trans("ExportCSV") . '">📥 ' . $langs->trans("ExportCSV") . '</a>';
+print '<a href="' . htmlspecialchars($export_url) . '" class="button" style="padding: 6px 14px; font-size: 12px; text-decoration: none;" title="' . $langs->trans("ExportExcel") . '">📥 Excel</a>';
 // Print button (#13)
 print '<a href="javascript:window.print()" class="button" style="padding: 6px 14px; font-size: 12px; text-decoration: none;">🖨️ Imprimer</a>';
 print '</div>';
