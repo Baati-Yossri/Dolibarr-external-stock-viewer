@@ -42,7 +42,7 @@ if ($resql_csv) {
     // Main Title Row
     $html .= '<tr style="background-color: #f8fafc;">';
     $html .= '<th colspan="4" style="font-size: 18pt; font-weight: bold; color: #0f172a; text-align: left; padding: 20px 15px 5px 15px; border-bottom: none;">';
-    $html .= '📦 ' . $langs->trans("MyStock");
+    $html .= '📦 ' . $langs->trans("MyStock") . ' chez TECHNOPROD';
     $html .= '</th>';
     $html .= '</tr>';
     
