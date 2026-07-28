@@ -371,8 +371,6 @@ $export_url = $_SERVER["PHP_SELF"] . '?action=export_csv';
 if (!empty($search_keyword)) $export_url .= '&search_keyword=' . urlencode($search_keyword);
 if (!empty($search_entrepot)) $export_url .= '&search_entrepot=' . (int) $search_entrepot;
 print '<a href="' . htmlspecialchars($export_url) . '" class="button" style="padding: 6px 14px; font-size: 12px; text-decoration: none;" title="' . $langs->trans("ExportExcel") . '">📥 Excel</a>';
-// Print button (#13)
-print '<a href="javascript:window.print()" class="button" style="padding: 6px 14px; font-size: 12px; text-decoration: none;">🖨️ Imprimer</a>';
 print '</div>';
 print '</div>';
 
