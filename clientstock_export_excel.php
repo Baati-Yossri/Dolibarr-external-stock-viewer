@@ -4,6 +4,12 @@
  * Expected variables in scope: $socid, $allowed_entrepots, $search_entrepot, $search_keyword, $db, $langs
  */
 
+// Direct access guard - this file must be included by an authenticated page, never accessed standalone
+if (!defined('MAIN_DB_PREFIX')) {
+    http_response_code(403);
+    die('Direct access forbidden.');
+}
+
 $csv_where = "";
 if ($socid > 0) {
     $csv_where .= " WHERE ps.fk_entrepot IN (" . implode(',', array_map('intval', $allowed_entrepots)) . ")";
